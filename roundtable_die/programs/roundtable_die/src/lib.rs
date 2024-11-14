@@ -10,7 +10,6 @@ pub mod number_guessing_game {
 
     #[account]
     pub struct ChooseNumber {
-        // pub bet_amount: u64,
         pub players: Vec<Player>,
         pub vrf_key: Pubkey,
     }
@@ -39,6 +38,24 @@ pub mod number_guessing_game {
         pub game_account: Account<'info, ChooseNumber>,
         #[account(mut)]
         pub oracle_queue_account: Account<'info, VrfAccountData>,
+    }
+
+    #[event]
+    pub struct PlayerChoseNumber {
+        pub player: Pubkey,
+        pub chosen_number: u8,
+        pub bet_amount: u64,
+        pub bet_currency: String,
+        pub timestamp: i64,
+    }
+
+    #[event]
+    pub struct PlayerWon {
+        pub player: Pubkey,
+        pub winning_number: u8,
+        pub prize_amount: u64,
+        pub prize_currency: String,
+        pub timestamp: i64,
     }
 
     pub fn choose_number(ctx: Context<ChooseNumber>, number: u8) -> ProgramResult {
@@ -76,6 +93,14 @@ pub mod number_guessing_game {
             required_lamports,
         )?;
 
+        emit!(PlayerChoseNumber {
+            player: *ctx.accounts.player.key,
+            chosen_number,
+            bet_amount: BET_AMOUNT,
+            bet_currency: "SOL".to_string(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
         // If this is the sixth player, reveal the winner
         if game_account.players.len() == 6 {
             let oracle_queue_account = &ctx.accounts.oracle_queue_account;
@@ -84,6 +109,7 @@ pub mod number_guessing_game {
                 ctx.program_id,
                 ctx.accounts.game_account.key(),
                 ctx.accounts.oracle_account.to_account_info(),
+                // settle_game
             )?;
             game_account.vrf_key = vrf_key;
 
@@ -106,25 +132,24 @@ pub mod number_guessing_game {
         let game_account = &mut ctx.accounts.game_account;
         let vrf_account = &ctx.accounts.vrf_account;
 
-        let result = vrf_account.result.ok_or(CustomError::RandomnessNotAvailable)?;
-        let random_number = (result % 6) + 1;
-        let winning_player = game_account.players.iter().find(|p| p.number == random_number);
+         // Retrieve the randomness result using `vrf_key`.
+        if game_account.vrf_key != *vrf_account.to_account_info().key {
+            return Err(ProgramError::InvalidArgument.into());
+        }
 
-        // Determine the winning player
-        let winning_player = game_account
-            .players
-            .iter()
-            .find(|p| p.number == random_number);
+        let result = vrf_account.result.ok_or(CustomError::RandomnessNotAvailable)?;
+        let winning_number = (result % 6) + 1;
+        let winning_player = game_account.players.iter().find(|p| p.number == winning_number);
 
         // Determine the winning player based on the random number
         let winning_player = game_account
             .players
             .iter()
-            .find(|p| p.number == random_number);
+            .find(|p| p.number == winning_number);
 
         // Transfer funds to the winner
         if let Some(winner) = winning_player {
-            let prize_amount = BET_AMOUNT * 42 / 10; // 4.2x multiplier
+            let prize_amount = BET_AMOUNT + BET_AMOUNT * 42 / 10; // 4.2x multiplier + original bet
             token::transfer(
                 ctx.accounts.into_context(token::Transfer {
                     from: game_account.to_account_info(),
@@ -133,11 +158,21 @@ pub mod number_guessing_game {
                 })?,
                 prize_amount,
             )?;
+
+            emit!(PlayerWon {
+                player: *ctx.accounts.player.key,
+                winning_number,
+                prize_amount,
+                prize_currency: "SOL".to_string(),
+                timestamp: Clock::get()?.unix_timestamp,
+            });
         }
 
         // Reset the game state for the next round
         game_account.players.clear();
         game_account.vrf_key = Pubkey::default;
+
+        Ok(())
     }
 }
 
