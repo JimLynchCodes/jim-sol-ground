@@ -4,7 +4,7 @@ Some Solana programs and front-end clients made by Jim.
 
 <br/>
 
-## Playground Code
+## Playground Code 🛝
 
 There is no "Cargo.toml" in anywhere in this repo because these files are meant to be used on the [Solana Playground](https://beta.solpg.io).
 
